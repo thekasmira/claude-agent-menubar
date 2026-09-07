@@ -1,20 +1,18 @@
-# agent-menubar
+# claude-agent-menubar
 
 A macOS menu bar indicator for every Claude Code session running on your
 Mac. It shows what each session is doing right now, and clicking one
 focuses its terminal tab.
 
-*(screenshot placeholder — drop a PNG of the menu bar dropdown here)*
-
 ```
 🟢2 🔴1                          <- menu bar
-├── 🔴 SkillSpoutPortal   needs_input  3m
-│     ~/Library/.../SkillSpoutPortal
+├── 🔴 my-api             needs_input  3m
+│     ~/dev/my-api
 │     tty /dev/ttys001 · pid 62324
 │     Claude needs your permission to run: git push origin test
 │     up 1h30m · last event: Notification
-├── 🟢 SkillSpout         working      48s
-│     ~/Documents/Personal/SkillSpout
+├── 🟢 website            working      48s
+│     ~/dev/website
 │     3 subagents running
 └── ✅ agent-menubar      done         2h02m
 ```
@@ -32,8 +30,8 @@ focuses its terminal tab.
 
 1. Get the code:
    ```bash
-   git clone <this-repo-url> agent-menubar
-   # or: unzip agent-menubar.zip
+   git clone https://github.com/thekasmira/claude-agent-menubar.git agent-menubar
+   # or: unzip claude-agent-menubar.zip
    cd agent-menubar
    ```
 2. Run the installer:
