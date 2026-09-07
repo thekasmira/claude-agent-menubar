@@ -10,6 +10,7 @@
 # Reads the records written by ~/dev/agent-menubar/hook.sh.
 # Run with `--clear` to prune dead/corrupt records without printing a menu.
 
+import glob
 import json
 import os
 import subprocess
@@ -142,6 +143,108 @@ def tilde(path):
     return "~" + path[len(HOME):] if path.startswith(HOME) else path
 
 
+def _registry_name(pid, session_id):
+    """A user-set /rename name from ~/.claude/sessions/<pid>.json, if any.
+
+    `nameSource` is "derived" for Claude Code's own auto-generated name;
+    anything else (including a missing field) is treated as user-set, per
+    spec. Only trusted when the registry's own sessionId still matches."""
+    if not pid or not session_id:
+        return None
+    path = os.path.join(HOME, ".claude", "sessions", "%s.json" % pid)
+    try:
+        with open(path) as fh:
+            reg = json.load(fh)
+        if not isinstance(reg, dict):
+            return None
+        if reg.get("sessionId") != session_id:
+            return None
+        if reg.get("nameSource") == "derived":
+            return None
+        name = reg.get("name")
+        return str(name) if name else None
+    except Exception:
+        return None
+
+
+def _ai_titles_in(lines):
+    """Last aiTitle among an iterable of raw jsonl lines, or None."""
+    marker = b'"type":"ai-title"'
+    title = None
+    for line in lines:
+        if marker not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(rec, dict) and rec.get("type") == "ai-title":
+            t = rec.get("aiTitle")
+            if t:
+                title = str(t)
+    return title
+
+
+def _last_ai_title(path):
+    """The most recent `ai-title` line's aiTitle. Scans only the tail of the
+    file (cheap, fine for a 5s-refresh plugin); falls back to a full,
+    line-filtered pass only when the tail didn't contain one at all."""
+    TAIL = 256 * 1024
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as fh:
+            if size > TAIL:
+                fh.seek(size - TAIL)
+                fh.readline()  # drop the partial line left by the seek
+            title = _ai_titles_in(fh)
+        if title is not None or size <= TAIL:
+            return title
+        with open(path, "rb") as fh:
+            return _ai_titles_in(fh)
+    except Exception:
+        return None
+
+
+def _transcript_title(session_id):
+    if not session_id:
+        return None
+    try:
+        matches = glob.glob(os.path.join(
+            HOME, ".claude", "projects", "*", "%s.jsonl" % session_id))
+        if not matches:
+            return None
+        path = max(matches, key=lambda p: os.path.getmtime(p))
+        return _last_ai_title(path)
+    except Exception:
+        return None
+
+
+def truncate(text, limit=36):
+    text = str(text)
+    if len(text) <= limit:
+        return text
+    if limit <= 1:
+        return text[:limit]
+    return text[:limit - 1].rstrip() + "…"
+
+
+def session_label(rec):
+    """Custom /rename name > transcript auto title > `project` (cwd basename)."""
+    try:
+        name = _registry_name(rec.get("pid"), rec.get("session_id"))
+        if name:
+            return truncate(name)
+    except Exception:
+        pass
+    try:
+        title = _transcript_title(rec.get("session_id"))
+        if title:
+            return truncate(title)
+    except Exception:
+        pass
+    return truncate(rec.get("project") or "?")
+
+
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--clear":
         load(prune_only=True)
@@ -175,9 +278,9 @@ def main():
         for s in sessions:
             state = s.get("state", "idle")
             icon = ICON.get(state, "⚪")
-            project = clean(s.get("project") or "?")
+            label = clean(session_label(s))
             tty = str(s.get("tty") or "")
-            line = "%s %s  %s  %s" % (icon, project, state, elapsed(s.get("state_since")))
+            line = "%s %s  %s  %s" % (icon, label, state, elapsed(s.get("state_since")))
             params = ["symbolize=false"]
             if tty:
                 term_prog = clean(s.get("terminal") or "Apple_Terminal")

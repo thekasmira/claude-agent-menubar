@@ -11,7 +11,7 @@ focuses its terminal tab.
 │     tty /dev/ttys001 · pid 62324
 │     Claude needs your permission to run: git push origin test
 │     up 1h30m · last event: Notification
-├── 🟢 website            working      48s
+├── 🟢 Refactor auth middleware  working  48s
 │     ~/dev/website
 │     3 subagents running
 └── ✅ agent-menubar      done         2h02m
@@ -109,6 +109,14 @@ Records are the only shared state, so nothing needs to be restarted or kept in
 sync. A record is created by whichever event fires first and deleted on
 `SessionEnd`; anything the plugin finds pointing at a dead process is deleted on
 the next refresh.
+
+### Session names
+
+Each session's label is picked with this precedence: a custom name you set
+with `/rename` in that session, otherwise Claude Code's auto-generated
+conversation title (read from the session's transcript), otherwise the
+project folder name. The submenu always shows the full cwd underneath,
+regardless of which one is used for the label.
 
 ## State model
 
