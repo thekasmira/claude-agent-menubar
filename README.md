@@ -5,26 +5,33 @@ Mac. It shows what each session is doing right now, and clicking one
 focuses its terminal tab.
 
 ```
-🟢2 🔴1                          <- menu bar
+🔵1 🔴1                          <- menu bar
 ├── 🔴 my-api             needs_input  3m
 │     ~/dev/my-api
 │     tty /dev/ttys001 · pid 62324
 │     Claude needs your permission to run: git push origin test
 │     up 1h30m · last event: Notification
-├── 🟢 Refactor auth middleware  working  48s
+├── 🔵 Refactor auth middleware  2 subagents  48s
 │     ~/dev/website
-│     3 subagents running
+│     main loop: working
+│     general-purpose · up 5m · last seen 35s ago
+│     subagent · up 20m · last seen 16m ago (quiet?)
 └── ✅ agent-menubar      done         2h02m
 ```
 
-## The four marks
+## The five marks
 
 | Mark | Meaning |
 |---|---|
 | 🟢 | **working** — Claude is actively doing something |
+| 🔵 | **subagents running** — one or more subagents are live; the main loop may be waiting on them or working alongside, and the submenu lists each one |
 | ✅ | **done / waiting on you** — Claude finished and there's nothing blocking it |
 | 🔴 | **needs input** — a real permission prompt or question dialog is blocking the session |
 | ⚪ | **idle** — session opened, nothing asked of it yet |
+
+✅ now means the main loop finished *and* no subagent is still live — previously
+a session flipped to ✅ the moment the orchestrator ended its turn even while
+background subagents kept running, which read as "done" when it wasn't.
 
 ## Install
 
@@ -89,18 +96,32 @@ prints the commands to remove it too, and leaves the installed folder
 
 ## How it works
 
-Three pieces, no daemon and no database:
+Four pieces, no daemon and no database:
 
-1. **`hook.sh`** — registered on eight Claude Code hook events in
-   `~/.claude/settings.json`. Every event writes/updates one small JSON record at
-   `~/.claude/agent-status/<session_id>.json`. Because a hook runs as a child of
-   the `claude` process, it can walk up its own ancestor chain to find that
-   process and record its **pid**, **tty**, and hosting **terminal app** — what's
-   needed to prove the session is alive and to find its tab later. (`tty` on the
-   hook's own stdin is useless: stdin is a pipe.)
-2. **`plugins/claude-agents.5s.sh`** — a SwiftBar plugin that re-reads those
+1. **`hook.sh`** — the launcher registered on eight Claude Code hook events in
+   `~/.claude/settings.json`. It does nothing but run `hook-impl.sh` and always
+   exit 0, because a hook that exits 2 (which bash does on a syntax error)
+   blocks the tool call or session it's attached to — machine-wide — so
+   keeping the launcher trivial means a bad edit to the implementation only
+   ever degrades the menu bar, never Claude Code itself.
+2. **`hook-impl.sh`** — the actual logic. Every event writes/updates one small
+   JSON record at `~/.claude/agent-status/<session_id>.json`, tracking two
+   things independently: `main` (the top-level agent loop's own state) and
+   `agents` (the set of live subagents, keyed by `agent_id`, added by
+   `SubagentStart` and removed by `SubagentStop`). Events from inside a
+   subagent carry `agent_id`/`agent_type` and never move `main` or the
+   session's `cwd` label; a `SubagentStop` for an id this session never saw
+   start — Claude Code's own internal helper agents — is ignored rather than
+   guessed at. Because a hook runs as a child of the `claude` process, it can
+   also walk up its own ancestor chain to find that process and record its
+   **pid**, **tty**, and hosting **terminal app** — what's needed to prove the
+   session is alive and to find its tab later. (`tty` on the hook's own stdin
+   is useless: stdin is a pipe.) Every event is also appended to
+   `~/.claude/agent-status/events.log` (rotated at 512 KB) as a debugging aid
+   — set `CLAUDE_AGENT_STATUS_LOG=0` to disable it.
+3. **`plugins/claude-agents.5s.sh`** — a SwiftBar plugin that re-reads those
    records every 5 seconds and renders the menu.
-3. **`focus-tab.sh <tty> [terminal]`** — AppleScript that walks the hosting
+4. **`focus-tab.sh <tty> [terminal]`** — AppleScript that walks the hosting
    terminal app's windows and tabs, finds the tab whose `tty` matches, selects
    it, and raises the window. Dispatches to a Terminal.app or iTerm2 script
    depending on the recorded terminal app.
@@ -120,17 +141,31 @@ regardless of which one is used for the label.
 
 ## State model
 
-| State | Icon | Set by | Meaning |
-|---|---|---|---|
-| `idle` | ⚪ | `SessionStart` | Session opened, nothing asked of it yet |
-| `working` | 🟢 | `UserPromptSubmit`, `PreToolUse` | Claude is actively doing something |
-| `done` | ✅ | `Stop` | Claude finished and is waiting on you |
-| `needs_input` | 🔴 | `Notification` | Permission prompt / elicitation dialog — **you are blocking it** |
-| *(deleted)* | — | `SessionEnd` | Record removed |
+Two things are tracked independently and combined into the displayed `state`:
 
-`SubagentStart` / `SubagentStop` only increment and decrement a `subagents`
-counter; they deliberately leave `state` alone, so a session running five
-subagents still reads as `working` rather than flapping.
+**`main`** — what the top-level agent loop is doing. Moved **only** by events
+from the main context (payloads without an `agent_id`):
+
+| `main` | Set by | Meaning |
+|---|---|---|
+| `idle` | `SessionStart` | Session opened, nothing asked of it yet |
+| `working` | `UserPromptSubmit`, `PreToolUse` (main context) | Claude is actively doing something |
+| `done` | `Stop` | The main loop ended its turn |
+| `needs_input` | `Notification` | Permission prompt / elicitation dialog — **you are blocking it** |
+| *(deleted)* | `SessionEnd` | Record removed |
+
+**`agents`** — the set of live subagents, keyed by `agent_id`. `SubagentStart`
+adds one; `SubagentStop` removes it **only if the id is known** (Claude Code
+also emits `SubagentStop` for its internal helper agents, with an empty
+`agent_type` and ids that never started — those are ignored); any other event
+carrying an `agent_id` self-heals a missing entry and refreshes its `seen`
+timestamp; an entry silent for an hour is pruned as a missed stop.
+
+Displayed `state` = `needs_input` if `main` is `needs_input` → else
+`subagents` (🔵) if any agent is live → else `main`. So ✅ means "main loop
+finished **and** nothing is running underneath" — `Stop` fires the instant the
+orchestrator ends its turn, even with background agents still going, which is
+why the old single state machine flipped to ✅ too early.
 
 Two details worth knowing:
 
@@ -150,8 +185,13 @@ Two details worth knowing:
   "session_id": "6781f9fd-…", "pid": 57421, "tty": "ttys004",
   "terminal": "Apple_Terminal",
   "cwd": "/Users/you/dev/agent-menubar", "project": "agent-menubar",
-  "state": "working", "state_since": 1788813153, "last_event": "PreToolUse",
-  "started_at": 1788813153, "subagents": 0, "updated_at": 1788813180,
+  "state": "subagents", "main": "done", "state_since": 1788813153,
+  "last_event": "PreToolUse (general-purpose)",
+  "started_at": 1788813153, "updated_at": 1788813180,
+  "agents": {
+    "a8bb627f38ba116a4": {"type": "general-purpose", "since": 1788813160, "seen": 1788813180}
+  },
+  "subagents": 1,
   "message": "…", "notification_type": "permission_prompt"
 }
 ```
@@ -164,8 +204,9 @@ is `needs_input`.
 ## Menu items
 
 * **Click a session** → focuses its tab (Terminal.app / iTerm2 only, see above).
-* **Submenu** (hover a session) → cwd, tty/pid, subagent count when > 0, the
-  pending prompt text when blocked, uptime and last event.
+* **Submenu** (hover a session) → cwd, tty/pid, the main loop's own state and
+  one line per live subagent (type, uptime, last seen — `(quiet?)` after 15 min
+  of silence) when 🔵, the pending prompt text when blocked, uptime and last event.
 * **Open status folder** → opens `~/.claude/agent-status`.
 * **Clear stale** → forces a prune of dead and unparseable records.
 
@@ -192,6 +233,19 @@ is `needs_input`.
   this home directory are tracked.
 * **Menu bar counts, not identities.** Two sessions in the same directory look
   identical in the dropdown apart from their tty.
+
+## Testing
+
+```bash
+./test.sh
+```
+
+A self-contained regression test — no installed hooks or real Claude Code
+session required. It points `CLAUDE_AGENT_STATUS_DIR` at a temp directory,
+pipes synthetic hook payloads through `./hook.sh`, and asserts the resulting
+record with `jq` after each step (main-loop transitions, subagent add/remove,
+self-heal, notifications, and a broken `hook-impl.sh` still exiting 0). Run it
+after any change to `hook.sh` or `hook-impl.sh`.
 
 ## Files
 

@@ -29,11 +29,13 @@ FOCUS = os.path.join(os.path.dirname(_here), "focus-tab.sh")
 if not os.path.isfile(FOCUS):
     FOCUS = os.path.join(HOME, ".claude", "agent-menubar", "focus-tab.sh")
 
-ICON = {"working": "🟢", "needs_input": "🔴", "done": "✅", "idle": "⚪"}
-# needs_input first, then done, then working, then idle
-ORDER = {"needs_input": 0, "done": 1, "working": 2, "idle": 3}
-# menu-bar count order, per spec: 🟢2 🔴1
-TITLE_ORDER = ["working", "needs_input", "done", "idle"]
+ICON = {"working": "🟢", "subagents": "🔵", "needs_input": "🔴", "done": "✅", "idle": "⚪"}
+# menu list order (attention first): needs_input, done, subagents, working, idle
+ORDER = {"needs_input": 0, "done": 1, "subagents": 2, "working": 3, "idle": 4}
+# menu-bar title order, per spec: 🟢2 🔵1 🔴1
+TITLE_ORDER = ["working", "subagents", "needs_input", "done", "idle"]
+
+QUIET_AFTER = 15 * 60  # seconds since an agent's last event before it's flagged "(quiet?)"
 
 
 def live_pids():
@@ -141,6 +143,16 @@ def clean(text):
 def tilde(path):
     path = str(path)
     return "~" + path[len(HOME):] if path.startswith(HOME) else path
+
+
+def _agent_sort_key(item):
+    """Sort live agents by `since`. Missing/unparseable `since` sorts first
+    rather than raising -- agents entries are untrusted, hand-editable JSON."""
+    _, ag = item
+    try:
+        return float((ag or {}).get("since"))
+    except (TypeError, ValueError, AttributeError):
+        return 0.0
 
 
 def _registry_name(pid, session_id):
@@ -280,7 +292,15 @@ def main():
             icon = ICON.get(state, "⚪")
             label = clean(session_label(s))
             tty = str(s.get("tty") or "")
-            line = "%s %s  %s  %s" % (icon, label, state, elapsed(s.get("state_since")))
+            if state == "subagents":
+                try:
+                    n = int(s.get("subagents") or 0)
+                except (TypeError, ValueError):
+                    n = 0
+                mid = "%d subagent%s" % (n, "" if n == 1 else "s")
+            else:
+                mid = state
+            line = "%s %s  %s  %s" % (icon, label, mid, elapsed(s.get("state_since")))
             params = ["symbolize=false"]
             if tty:
                 term_prog = clean(s.get("terminal") or "Apple_Terminal")
@@ -293,9 +313,24 @@ def main():
             print("--%s | symbolize=false color=#888888" % clean(tilde(s.get("cwd", ""))))
             if tty:
                 print("--tty /dev/%s · pid %s | color=#888888" % (clean(tty), s.get("pid", "?")))
-            subs = s.get("subagents") or 0
-            if subs > 0:
-                print("--%d subagent%s running" % (subs, "" if subs == 1 else "s"))
+            if state == "subagents":
+                print("--main loop: %s | color=#888888" % clean(s.get("main") or "?"))
+            agents = s.get("agents")
+            if isinstance(agents, dict) and agents:
+                now = time.time()
+                for _aid, ag in sorted(agents.items(), key=_agent_sort_key):
+                    if not isinstance(ag, dict):
+                        ag = {}
+                    atype = clean(ag.get("type") or "subagent")
+                    seen = ag.get("seen")
+                    quiet = ""
+                    try:
+                        if (now - float(seen)) > QUIET_AFTER:
+                            quiet = " (quiet?)"
+                    except (TypeError, ValueError):
+                        pass
+                    print("--%s · up %s · last seen %s ago%s | color=#888888" % (
+                        atype, elapsed(ag.get("since")), elapsed(seen), quiet))
             msg = s.get("message")
             if msg and state == "needs_input":
                 print("--%s | symbolize=false length=70" % clean(msg))
