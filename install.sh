@@ -12,7 +12,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CANONICAL_DIR="$HOME/.claude/agent-menubar"
 SETTINGS="$HOME/.claude/settings.json"
-HOOK_EVENTS="SessionStart UserPromptSubmit PreToolUse Stop Notification SubagentStart SubagentStop SessionEnd"
+HOOK_EVENTS="SessionStart UserPromptSubmit PreToolUse PermissionRequest Stop Notification SubagentStart SubagentStop SessionEnd"
 
 echo "== claude-agent-menubar installer =="
 

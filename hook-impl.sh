@@ -1,14 +1,20 @@
 #!/bin/bash
 # claude-agent-menubar :: status hook (implementation; launched by hook.sh)
 #
-# Invoked by Claude Code for SessionStart, UserPromptSubmit, PreToolUse, Stop,
-# Notification, SubagentStart, SubagentStop and SessionEnd.
+# Invoked by Claude Code for SessionStart, UserPromptSubmit, PreToolUse,
+# PermissionRequest, Stop, Notification, SubagentStart, SubagentStop and
+# SessionEnd.
 # Reads the hook JSON payload on stdin and maintains one status record per
 # session at $STATUS_DIR/<session_id>.json.
 #
 # Two things are tracked independently and combined into the displayed state:
 #   main   -> what the top-level agent loop is doing (idle/working/done/needs_input),
-#             moved ONLY by events from the main context (no agent_id in payload)
+#             moved ONLY by events from the main context (no agent_id in payload),
+#             except that a permission dialog blocks the whole session wherever
+#             it comes from. needs_input comes from PermissionRequest (fired the
+#             moment a permission dialog opens, including the dangerous-rm
+#             check that asks even under --dangerously-skip-permissions) or a
+#             permission/elicitation Notification.
 #   agents -> the set of live subagents keyed by agent_id (SubagentStart adds,
 #             SubagentStop removes, any event carrying an agent_id self-heals)
 # state = needs_input > subagents (any live agent) > main. The old single state
@@ -124,6 +130,10 @@ printf '%s' "$payload" | "$JQ" -c \
      elif $ev == "PreToolUse" then
             (if $sub_ctx then (if $pm == "needs_input" then "done" else $pm end)
              else "working" end)
+     # PermissionRequest fires as the dialog opens. The permission_prompt
+     # Notification follows only after an idle delay (about 6 s in testing),
+     # and until then a session blocked on the dialog showed as working.
+     elif $ev == "PermissionRequest"                           then "needs_input"
      elif $ev == "Stop"                                        then "done"
      elif $ev == "Notification" then (if $quiet then $pm else "needs_input" end)
      else $pm end) as $main
@@ -171,6 +181,11 @@ printf '%s' "$payload" | "$JQ" -c \
     }
   | if $ev == "Notification" and ($quiet | not)
     then . + {message: ($p.message // ""), notification_type: $ntype}
+    elif $ev == "PermissionRequest"
+    then . + {message: ({"AskUserQuestion": "Claude asked you a question",
+                         "ExitPlanMode": "Claude is waiting for you to approve a plan"}[$p.tool_name // ""]
+                        // "Claude needs your permission to use \($p.tool_name // "a tool")"),
+              notification_type: "permission_prompt"}
     else . end
   # a stale prompt string outliving the prompt is worse than none
   | if .state != "needs_input" then del(.message, .notification_type) else . end
