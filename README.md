@@ -124,7 +124,10 @@ Four pieces, no daemon and no database:
 4. **`focus-tab.sh <tty> [terminal]`** — AppleScript that walks the hosting
    terminal app's windows and tabs, finds the tab whose `tty` matches, selects
    it, and raises the window. Dispatches to a Terminal.app or iTerm2 script
-   depending on the recorded terminal app.
+   depending on the recorded terminal app. The Terminal.app script activates
+   Terminal first, un-minimizes the window if needed, and addresses it by its
+   `id`: AppleScript's loop variable is a positional reference (`window 2`),
+   so after the window order changes it names a different window.
 
 Records are the only shared state, so nothing needs to be restarted or kept in
 sync. A record is created by whichever event fires first and deleted on

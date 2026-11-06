@@ -48,19 +48,35 @@ case "$term" in
 on run
   set target to "$target"
   tell application "Terminal"
+    -- Address the window by its id, never by the loop variable: "w" is a
+    -- positional reference ("window 2"), so once "set index" reorders the
+    -- windows it names a different window, and raising it put the previous
+    -- front window back on top (the flicker).
+    set wid to missing value
     repeat with w in windows
       repeat with t in tabs of w
         try
           if (tty of t) is target then
+            set wid to id of w
             set selected of t to true
-            set index of w to 1
-            set frontmost of w to true
-            activate
-            return "ok"
+            exit repeat
           end if
         end try
       end repeat
+      if wid is not missing value then exit repeat
     end repeat
+    if wid is missing value then return "notfound"
+    -- Activate first: activating afterwards can re-raise the window that
+    -- had focus before.
+    activate
+    set win to window id wid
+    if miniaturized of win then
+      set miniaturized of win to false
+      -- the restore animation can land the window behind the others
+      delay 0.4
+    end if
+    set index of win to 1
+    return "ok"
   end tell
   return "notfound"
 end run
