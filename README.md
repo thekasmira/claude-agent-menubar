@@ -98,7 +98,7 @@ prints the commands to remove it too, and leaves the installed folder
 
 Four pieces, no daemon and no database:
 
-1. **`hook.sh`** — the launcher registered on eight Claude Code hook events in
+1. **`hook.sh`** — the launcher registered on nine Claude Code hook events in
    `~/.claude/settings.json`. It does nothing but run `hook-impl.sh` and always
    exit 0, because a hook that exits 2 (which bash does on a syntax error)
    blocks the tool call or session it's attached to — machine-wide — so
@@ -151,7 +151,7 @@ from the main context (payloads without an `agent_id`):
 | `idle` | `SessionStart` | Session opened, nothing asked of it yet |
 | `working` | `UserPromptSubmit`, `PreToolUse` (main context) | Claude is actively doing something |
 | `done` | `Stop` | The main loop ended its turn |
-| `needs_input` | `Notification` | Permission prompt / elicitation dialog — **you are blocking it** |
+| `needs_input` | `PermissionRequest` (any context), `Notification` | Permission prompt / elicitation dialog — **you are blocking it** |
 | *(deleted)* | `SessionEnd` | Record removed |
 
 **`agents`** — the set of live subagents, keyed by `agent_id`. `SubagentStart`
@@ -221,10 +221,7 @@ is `needs_input`.
   terminal-agnostic) but clicking them reports that no matching tab was
   found. tmux is the awkward case: the tty recorded is the pane's, which
   neither app has ever heard of.
-* **🔴 `needs_input` only means a real dialog.** Only `permission_prompt` and
-  `elicitation_dialog` notifications turn a session red. `idle_prompt` (Claude
-  finished and you haven't typed for a while) leaves it at ✅ `done`, so under
-  `--dangerously-skip-permissions` you will rarely see red at all.
+* **🔴 `needs_input` only means a real dialog.** `PermissionRequest` and the `permission_prompt` and `elicitation_dialog` notifications turn a session red. `PermissionRequest` fires the moment a permission dialog opens; the notification follows only after an idle delay (about 6 seconds in testing), so without `PermissionRequest` a session blocked on a dialog, such as the dangerous-`rm` check that asks even under `--dangerously-skip-permissions`, showed as working until then. `idle_prompt` (Claude finished and you haven't typed for a while) leaves it at ✅ `done`. Under `--dangerously-skip-permissions` you will see red only for the dialogs that mode still shows.
 * **Subagent counts can drift.** Parallel subagents finishing at the same
   instant can race on the read-modify-write of one record and lose a decrement.
   The counter is clamped at zero and resets on the next `SessionStart`; it's a

@@ -167,6 +167,27 @@ assert_eq "Notification idle_prompt -> main unchanged (needs_input)" "$(field .m
 assert_eq "Notification idle_prompt -> earlier prompt message preserved" "$(field .message)" "$MSG"
 assert_eq "Notification idle_prompt -> notification_type not overwritten" "$(field .notification_type)" "permission_prompt"
 
+# ---- PermissionRequest -> needs_input, with no Notification -------------------
+# The dangerous-rm dialog fires PermissionRequest and no Notification, so the
+# session must turn red on PermissionRequest alone.
+send '{"session_id":"'"$SID"'","hook_event_name":"UserPromptSubmit","cwd":"'"$CWD"'"}'
+send '{"session_id":"'"$SID"'","hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"'"$CWD"'"}'
+assert_eq "setup: main working before PermissionRequest" "$(field .main)" "working"
+send '{"session_id":"'"$SID"'","hook_event_name":"PermissionRequest","tool_name":"Bash","cwd":"'"$CWD"'"}'
+assert_eq "PermissionRequest -> state needs_input" "$(field .state)" "needs_input"
+assert_eq "PermissionRequest -> main needs_input" "$(field .main)" "needs_input"
+assert_eq "PermissionRequest -> message names the tool" "$(field .message)" "Claude needs your permission to use Bash"
+assert_eq "PermissionRequest -> notification_type permission_prompt" "$(field .notification_type)" "permission_prompt"
+send '{"session_id":"'"$SID"'","hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"'"$CWD"'"}'
+assert_eq "PreToolUse after an answered PermissionRequest -> main working" "$(field .main)" "working"
+assert_eq "PreToolUse after an answered PermissionRequest -> message cleared" "$(field 'has("message")')" "false"
+
+# A subagent's permission dialog blocks the session too.
+send '{"session_id":"'"$SID"'","hook_event_name":"PermissionRequest","agent_id":"agentP","agent_type":"general-purpose","tool_name":"Bash","cwd":"'"$CWD"'"}'
+assert_eq "PermissionRequest from a subagent -> state needs_input" "$(field .state)" "needs_input"
+send '{"session_id":"'"$SID"'","hook_event_name":"PreToolUse","agent_id":"agentP","agent_type":"general-purpose","tool_name":"Bash","cwd":"'"$CWD"'"}'
+assert_eq "subagent resumes after its PermissionRequest -> no longer needs_input" "$(field .state)" "subagents"
+
 # ============================================================================
 # Launcher safety: a broken hook-impl.sh must still exit 0
 # ============================================================================
