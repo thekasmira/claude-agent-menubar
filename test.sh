@@ -79,6 +79,15 @@ trap cleanup EXIT
 
 export CLAUDE_AGENT_STATUS_DIR="$TMP_STATUS_DIR"
 
+# Stub the SwiftBar refresh push: each push appends a line to REFRESH_LOG, and
+# the real SwiftBar is never asked to refresh by a test.
+REFRESH_LOG="$TMP_STATUS_DIR/refresh.log"
+REFRESH_STUB="$TMP_STATUS_DIR/refresh-stub.sh"
+printf '#!/bin/bash\necho refresh >> "%s"\n' "$REFRESH_LOG" > "$REFRESH_STUB"
+chmod +x "$REFRESH_STUB"
+export CLAUDE_AGENT_STATUS_REFRESH_CMD="$REFRESH_STUB"
+refreshes() { [ -f "$REFRESH_LOG" ] && wc -l < "$REFRESH_LOG" | tr -d ' ' || echo 0; }
+
 SID="11111111-1111-1111-1111-111111111111"
 CWD="/tmp/agent-menubar-test-proj"
 REC="$TMP_STATUS_DIR/$SID.json"
@@ -105,6 +114,15 @@ assert_eq "SessionStart -> main idle" "$(field .main)" "idle"
 send '{"session_id":"'"$SID"'","hook_event_name":"UserPromptSubmit","cwd":"'"$CWD"'"}'
 assert_eq "UserPromptSubmit -> state working" "$(field .state)" "working"
 assert_eq "UserPromptSubmit -> main working" "$(field .main)" "working"
+
+# ---- refresh push: on a visible change only --------------------------------
+n0="$(refreshes)"
+send '{"session_id":"'"$SID"'","hook_event_name":"PreToolUse","tool_name":"Bash","cwd":"'"$CWD"'"}'
+assert_eq "PreToolUse while working -> no refresh pushed" "$(refreshes)" "$n0"
+send '{"session_id":"'"$SID"'","hook_event_name":"Stop","cwd":"'"$CWD"'"}'
+assert_eq "Stop -> one refresh pushed" "$(refreshes)" "$((n0 + 1))"
+send '{"session_id":"'"$SID"'","hook_event_name":"UserPromptSubmit","cwd":"'"$CWD"'"}'
+assert_eq "UserPromptSubmit after Stop -> one more refresh pushed" "$(refreshes)" "$((n0 + 2))"
 
 # ---- SubagentStart -> subagents --------------------------------------------
 send '{"session_id":"'"$SID"'","hook_event_name":"SubagentStart","agent_id":"agentA","agent_type":"general-purpose","cwd":"'"$CWD"'"}'
@@ -166,6 +184,16 @@ assert_eq "Notification idle_prompt -> state unchanged (needs_input)" "$(field .
 assert_eq "Notification idle_prompt -> main unchanged (needs_input)" "$(field .main)" "needs_input"
 assert_eq "Notification idle_prompt -> earlier prompt message preserved" "$(field .message)" "$MSG"
 assert_eq "Notification idle_prompt -> notification_type not overwritten" "$(field .notification_type)" "permission_prompt"
+
+# ============================================================================
+# SessionEnd drops the record and pushes a refresh
+# ============================================================================
+SID_END="33333333-3333-3333-3333-333333333333"
+send '{"session_id":"'"$SID_END"'","hook_event_name":"SessionStart","cwd":"'"$CWD"'"}'
+n0="$(refreshes)"
+send '{"session_id":"'"$SID_END"'","hook_event_name":"SessionEnd","cwd":"'"$CWD"'"}'
+assert_eq "SessionEnd -> record removed" "$([ -f "$TMP_STATUS_DIR/$SID_END.json" ] && echo present || echo gone)" "gone"
+assert_eq "SessionEnd -> one refresh pushed" "$(refreshes)" "$((n0 + 1))"
 
 # ============================================================================
 # Launcher safety: a broken hook-impl.sh must still exit 0
