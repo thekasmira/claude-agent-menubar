@@ -30,6 +30,33 @@ command -v "$JQ" >/dev/null 2>&1 || JQ="$(command -v jq 2>/dev/null)"
 payload="$(cat 2>/dev/null)"
 [ -n "$payload" ] || exit 0
 
+# ---- push a refresh to SwiftBar --------------------------------------------
+# The plugin polls every 5 s; a change the hook records reaches the menu bar
+# at once only if the hook asks SwiftBar to re-run the plugin. The plugin's
+# name for the URL is its filename up to the first dot. The call runs detached
+# with every descriptor closed, so the hook neither waits on it nor holds
+# Claude Code's stdout pipe open; it fires only while SwiftBar is running, so
+# it never relaunches a SwiftBar the user quit. Tests point
+# CLAUDE_AGENT_STATUS_REFRESH_CMD at a stub; "0" turns the push off.
+refresh_menu() {
+  local cmd="${CLAUDE_AGENT_STATUS_REFRESH_CMD:-}"
+  [ "$cmd" = "0" ] && return 0
+  if [ -n "$cmd" ]; then
+    ( "$cmd" ) </dev/null >/dev/null 2>&1
+    return 0
+  fi
+  ( /usr/bin/pgrep -xq SwiftBar \
+      && /usr/bin/open -g "swiftbar://refreshplugin?name=claude-agents" ) \
+    </dev/null >/dev/null 2>&1 &
+  return 0
+}
+
+# What the menu shows of one record. A refresh is pushed only when this
+# changes, so the PreToolUse stream of a working session costs nothing.
+menu_sig() {
+  "$JQ" -c '[.state, .main, .subagents, .notification_type, .project]' "$1" 2>/dev/null
+}
+
 # ---- extract the three fields we need to route on -------------------------
 # One value per line, read with IFS= so that an EMPTY field stays empty.
 # (@tsv + `read` is wrong here: TAB is IFS-whitespace, so bash collapses empty
@@ -65,6 +92,7 @@ esac
 # ---- SessionEnd: drop the record ------------------------------------------
 if [ "$ev" = "SessionEnd" ]; then
   rm -f "$STATUS_DIR/$sid.json" 2>/dev/null
+  refresh_menu
   exit 0
 fi
 
@@ -100,6 +128,7 @@ mkdir -p "$STATUS_DIR" 2>/dev/null
 f="$STATUS_DIR/$sid.json"
 [ -f "$f" ] || printf '{}\n' > "$f" 2>/dev/null
 tmp="$f.$$.tmp"
+old_sig="$(menu_sig "$f")"
 
 printf '%s' "$payload" | "$JQ" -c \
   --slurpfile old "$f" \
@@ -175,5 +204,7 @@ printf '%s' "$payload" | "$JQ" -c \
   # a stale prompt string outliving the prompt is worse than none
   | if .state != "needs_input" then del(.message, .notification_type) else . end
 ' > "$tmp" 2>/dev/null && mv -f "$tmp" "$f" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+
+[ "$(menu_sig "$f")" != "$old_sig" ] && refresh_menu
 
 exit 0
