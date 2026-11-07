@@ -120,6 +120,7 @@ Four pieces, no daemon and no database:
    `~/.claude/agent-status/events.log` (rotated at 512 KB) as a debugging aid
    — set `CLAUDE_AGENT_STATUS_LOG=0` to disable it.
    When an event changes what the menu shows of a session (its state, main loop, subagent count, prompt type or project), or `SessionEnd` drops its record, the hook asks SwiftBar to re-run the plugin at once by opening `swiftbar://refreshplugin?name=claude-agents` in the background, so a change reaches the menu bar in well under a second instead of up to 5 seconds later. A repeat event that changes nothing visible, such as the `PreToolUse` stream of a working session, pushes nothing. The push fires only while SwiftBar is running, so it never relaunches a SwiftBar you quit; set `CLAUDE_AGENT_STATUS_REFRESH_CMD=0` to turn it off.
+   SwiftBar counts a URL refresh as a manual one, and its **Dim on Manual Refresh** setting (General preferences, on by default) greys the menu bar title until the plugin answers, so each push shows as a brief flicker. To remove the flicker, turn that setting off, or run `defaults write com.ameba.SwiftBar DimOnManualRefresh -bool false` and restart SwiftBar. The setting applies to every SwiftBar plugin, so `install.sh` leaves it alone.
 3. **`plugins/claude-agents.5s.sh`** — a SwiftBar plugin that re-reads those
    records every 5 seconds and renders the menu.
    The 5-second poll remains the backstop for changes no hook event announces: the elapsed times, a quiet subagent, and a session whose process died.
